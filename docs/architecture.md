@@ -1,113 +1,135 @@
-# Architecture
+# Architecture — PyMigScore API
 
 ## Overview
 
-A REST API for managing projects and their attached documents. Users register, log in,
-create/share projects, and upload/download PDF and DOCX files.
+PyMigScore is a **FastAPI REST API** with two distinct layers:
 
-**Stack**: FastAPI · PostgreSQL (SQLAlchemy ORM) · AWS S3 · AWS Lambda · Docker · GitHub Actions  
-**Auth**: JWT (HS256, 1 h expiry) — all protected routes use a shared `get_current_user` dependency.  
-**Roles**: `owner` (creator, full control) · `participant` (invited, can read/update, cannot delete).  
-**Responses**: JSON + standard HTTP status codes; file downloads stream binary content.
+1. **Routers** — handle HTTP (auth, validation, responses)
+2. **Services** — pure-function domain pipeline (scoring, wave assignment)
+
+Routers call services, then read/write to PostgreSQL via SQLAlchemy.
+Uploaded CSV files are stored in AWS S3 for record-keeping.
+No extra abstraction layers — this is a mentoring project, not a distributed
+system.
 
 ---
 
 ## System Design
 
 ```mermaid
-graph LR
-    Client["Client"]
-    subgraph app["FastAPI app"]
-        Routers["Routers"]
-        Utils["utils/\n(auth, s3, email)"]
-        Models["SQLAlchemy Models"]
+graph TD
+    Client["HTTP Client"]
+    Browser["Browser"]
+
+    subgraph App ["FastAPI (Docker)"]
+        Routers["API Routers\n/auth · /assessments · /health"]
+        Dashboard["Dashboard\nGET /dashboard"]
+        Services["Domain Services\nloader · scoring"]
+        DB[("PostgreSQL")]
     end
-    DB[("PostgreSQL")]
-    S3[("AWS S3")]
-    Lambda["AWS Lambda"]
 
-    Client --> Routers
-    Routers --> Models --> DB
-    Routers --> Utils --> S3
-    S3 --> Lambda --> DB
+    S3["AWS S3\nfile storage"]
+
+    Client -->|JWT| Routers
+    Browser --> Dashboard
+    Dashboard -->|Jinja2| Browser
+    Browser -->|fetch + JWT| Routers
+    Routers --> Services
+    Routers --> DB
+    Routers --> S3
 ```
 
-Two meaningful layers inside the app:
+---
 
-| Layer | Files | Does |
+## Components
+
+| Component | File(s) | What it does |
 |---|---|---|
-| **Routers** | `auth.py`, `projects.py`, `documents.py` | Parse requests, run business logic, return responses |
-| **Utils** | `auth.py`, `s3.py`, `email.py` | Pure helper functions (JWT, bcrypt, boto3, SMTP) |
+| **App entry point** | `app/main.py` | Creates FastAPI app, registers routers, runs `create_all()` on startup |
+| **Settings** | `app/settings.py` | `pydantic-settings` class; `get_settings()` cached dependency |
+| **Database** | `app/database.py` | `Base`, `engine`, `SessionLocal`, `get_db()` dependency; ORM models `UserModel`, `AssessmentModel`, `ScoredSystemModel` |
+| **Schemas** | `app/schemas.py` | Pydantic v2 models for domain types (`SystemInventory`, `ScoredSystem`, enums) and API request/response shapes |
+| **S3 client** | `app/s3.py` | Thin boto3 wrapper: `upload_file(key, data)` and `delete_file(key)` — isolates AWS calls from routers |
+| **Auth** | `app/deps.py` | `get_current_user()` FastAPI dependency — decodes JWT, returns `UserModel` or raises `401` |
+| **Auth router** | `app/routers/auth.py` | `POST /auth/register`, `POST /auth/login` — hashes passwords, issues JWTs (OAuth2-compatible `username` field) |
+| **Assessments router** | `app/routers/assessments.py` | All `/assessments` endpoints — calls services, delegates S3 ops to `app/s3.py`, writes to DB |
+| **Health router** | `app/routers/health.py` | `GET /health` |
+| **Dashboard router** | `app/routers/dashboard.py` | `GET /dashboard` — serves the Jinja2 HTML template |
+| **Dashboard template** | `app/templates/dashboard.html` | Single HTML page with embedded CSS + JS; login form, assessment list, scored-systems table |
+| **Domain services** | `app/services/` | Pure functions: no DB, no HTTP (see table below) |
 
-SQLAlchemy models and Pydantic schemas are shared across both layers. No separate service layer — the route handlers are simple enough to contain their own logic directly.
+### Domain Services (`app/services/`)
 
----
+| Module | Function signature |
+|---|---|
+| `loader.py` | `parse_inventory(data: bytes) -> list[SystemInventory]` |
+| `scoring.py` | `score_systems(systems: list[SystemInventory]) -> list[ScoredSystem]` |
 
-## API & Access Control
-
-All routes except `POST /auth` and `POST /login` require `Authorization: Bearer <jwt>`.
-
-### Auth
-
-| Method | Path | Auth | Response |
-|---|---|---|---|
-| POST | `/auth` | — | `201` `{user_id, login}` — `409` login taken |
-| POST | `/login` | — | `200` `{access_token, token_type}` — `401` bad credentials |
-
-### Projects
-
-| Method | Path | Required role | Response |
-|---|---|---|---|
-| POST | `/projects` | any | `201` project created; caller becomes `owner` |
-| GET | `/projects` | any | `200` list of accessible projects (details + doc metadata) |
-| GET | `/project/<id>/info` | owner or participant | `200` / `403` / `404` |
-| PUT | `/project/<id>/info` | owner or participant | `200` updated info |
-| DELETE | `/project/<id>` | owner | `204` — cascades to S3 and DB |
-| POST | `/project/<id>/invite?user=<login>` | owner | `200` — `404` if user not found |
-| GET | `/project/<id>/share?with=<email>` | owner | `200` — emails a `/join?token=…` link to the address |
-| GET | `/join?token=<token>` | any (JWT required) | `201` — grants caller `participant` role on the project; `400` if token invalid/expired |
-
-### Documents
-
-| Method | Path | Required role | Response |
-|---|---|---|---|
-| GET | `/project/<id>/documents` | owner or participant | `200` document list |
-| POST | `/project/<id>/documents` | owner or participant | `201` one or more files uploaded |
-| GET | `/document/<id>` | owner or participant | redirect to S3 presigned URL (15 min) |
-| PUT | `/document/<id>` | owner or participant | `200` file replaced in S3, DB updated |
-| DELETE | `/document/<id>` | owner or participant | `204` removed from S3 and DB |
-
-Access control is enforced in each handler by checking the `project_access` table via the DB session.
+Services take Pydantic models in, return Pydantic models out. No side effects.
 
 ---
 
-## Data Models
+## Data Flow
 
-Four tables:
+### Create Assessment (POST /assessments → 201)
 
 ```
-users             projects           project_access        documents
-─────────         ────────           ──────────────        ─────────
-id (PK)           id (PK)            project_id (FK)       id (PK)
-login (unique)    name               user_id (FK)          project_id (FK)
-password_hash     description        role (owner|parti…)   filename
-                  storage_bytes                            s3_key
-                                                           size_bytes
+Client → POST /assessments (multipart: CSV + optional name)
+  → get_current_user()                # JWT check
+  → loader.parse_inventory(csv_bytes) # parse + validate CSV first
+  → scoring.score_systems(systems)    # score + wave + effort
+  → s3.upload_file(key, csv_bytes)    # store file in S3 (only after validation)
+  → db.add(AssessmentModel)
+  → db.add_all(ScoredSystemModel rows)
+  → db.commit()
+  ← 201 {full assessment with scored systems}
 ```
 
-`project_access` is the join table for the many-to-many user↔project relationship.
-Deleting a project cascade-deletes its `project_access` and `documents` rows (DB-level `ON DELETE CASCADE`).
+### Read / Delete
+
+```
+GET /assessments          → db.query(AssessmentModel).filter_by(user_id=...).all()
+GET /assessments/{id}     → db.get(AssessmentModel, id) + joined ScoredSystemModels
+DELETE /assessments/{id}  → owner check → s3.delete_file(assessment.s3_key)
+                          → db.delete(assessment) [cascade]
+```
+
+### Dashboard (GET /dashboard → HTML)
+
+```
+Browser → GET /dashboard
+  ← Jinja2 renders dashboard.html (static page, no server data needed)
+
+Once loaded, JS in the page:
+  → POST /auth/login (user enters credentials in a form)
+  → stores JWT in localStorage
+  → GET /assessments (fetch with Authorization header)
+  → renders assessment list in the page
+  → on click: GET /assessments/{id}
+  → renders scored systems table
+```
 
 ---
 
-## Key Technical Decisions
+## Key Decisions
 
-- **No service layer** — Route handlers query SQLAlchemy models directly via an injected `db` session and call `utils/` helpers. The app is small enough that a service layer adds indirection without benefit. For Phase 2's raw-SQL exercise, handlers can be extended with a second SQL-based implementation.
-- **JWT stateless, no revocation** — 1 h expiry per requirements; logout is client-side.
-- **S3 presigned URLs for downloads** — The API checks access in DB then returns a 15-min presigned URL. Files never stream through the API server.
-- **Share token = short-lived JWT** — `type: "share"` claim, 15 min expiry. No extra DB table needed.
-- **Email as a plain function** — `utils/email.py` has a single `send_email(to, subject, body)` call backed by SMTP locally or AWS SES in production, chosen via env var.
-- **One `ci.yml`** — lint → test → build image on every push; deploy step runs only on merge to `main`.
+- **No repository layer** — Routers use `db: Session = Depends(get_db)` and
+  call SQLAlchemy directly. A repository layer would add abstraction with no
+  benefit at this scale.
+- **Services are pure functions** — No DB, no HTTP inside services. Easy to
+  test in isolation.
+- **Flat file layout** — Everything in `app/` as flat files, not nested
+  sub-packages. Easier to navigate for a learner.
+- **S3 for file storage, not for processing** — The CSV is stored in S3 for
+  record-keeping. The scoring pipeline reads from the uploaded bytes directly,
+  not from S3.
+- **`create_all()` on startup** — No Alembic initially. Alembic is added as a
+  separate follow-up step.
+- **Hardcoded scoring weights** — No external YAML config. Weights are
+  constants in `scoring.py`. Simpler, fewer files, same skill demonstration.
+- **Dashboard is Jinja2, not a SPA** — A single HTML template with embedded
+  CSS and JS. No build tools, no npm, no frontend framework. The page calls
+  the JSON API via `fetch()`. This keeps the project firmly backend-focused.
 
 ---
 
@@ -116,67 +138,77 @@ Deleting a project cascade-deletes its `project_access` and `documents` rows (DB
 ```
 final_project/
 ├── app/
-│   ├── main.py           # FastAPI app, include routers
-│   ├── config.py         # Settings via pydantic-settings (reads .env)
-│   ├── dependencies.py   # get_db, get_current_user (FastAPI dependencies)
-│   ├── models.py         # SQLAlchemy ORM: User, Project, ProjectAccess, Document
-│   ├── schemas.py        # Pydantic request/response schemas
-│   │
+│   ├── __init__.py
+│   ├── main.py              # app factory, router registration, startup
+│   ├── settings.py          # pydantic-settings; get_settings()
+│   ├── database.py          # Base, engine, SessionLocal, ORM models, get_db()
+│   ├── schemas.py           # Pydantic domain types + API request/response
+│   ├── deps.py              # get_current_user() JWT dependency
+│   ├── s3.py                # boto3 wrapper: upload_file(), delete_file()
 │   ├── routers/
-│   │   ├── auth.py       # POST /auth, POST /login
-│   │   ├── projects.py   # /projects and /project/<id>/* routes
-│   │   └── documents.py  # /project/<id>/documents and /document/<id> routes
-│   │
-│   └── utils/
-│       ├── auth.py       # hash_password, verify_password, create_token, decode_token
-│       ├── s3.py         # upload_file, delete_file, presign_url (boto3 wrappers)
-│       └── email.py      # send_email()
-│
-├── lambda/
-│   ├── handler.py        # S3 ObjectCreated/Removed → update storage_bytes in DB
-│   └── requirements.txt  # psycopg2-binary, boto3
-│
+│   │   ├── __init__.py
+│   │   ├── auth.py          # POST /auth/register, POST /auth/login
+│   │   ├── assessments.py   # all /assessments routes
+│   │   ├── dashboard.py     # GET /dashboard — serves template
+│   │   └── health.py        # GET /health
+│   ├── templates/
+│   │   └── dashboard.html   # single-page dashboard (embedded CSS + JS)
+│   └── services/
+│       ├── __init__.py
+│       ├── loader.py        # CSV parsing + validation
+│       └── scoring.py       # scoring + wave assignment + effort
 ├── tests/
-│   ├── conftest.py       # TestClient, test DB session, mocked S3 (moto)
+│   ├── conftest.py          # db, client, auth_client, sample_inventory_csv
 │   ├── test_auth.py
-│   ├── test_projects.py
-│   └── test_documents.py
-│
-├── docs/
-│   ├── requirements.md
-│   └── architecture.md
-│
-├── .github/workflows/
-│   └── ci.yml            # ruff → pytest → docker build (→ deploy on main)
-│
+│   ├── test_assessments.py
+│   ├── test_health.py
+│   ├── test_dashboard.py
+│   └── test_services/
+│       ├── test_loader.py
+│       └── test_scoring.py
+├── .github/
+│   └── workflows/
+│       └── ci.yml           # ruff → pytest → docker build → push
 ├── Dockerfile
-├── docker-compose.yml    # app + PostgreSQL (LocalStack for S3 locally)
-├── pyproject.toml        # deps, ruff, pytest config
-└── .env.example
+├── docker-compose.yml       # app + postgres + localstack
+├── pyproject.toml
+├── .env.example
+└── README.md
 ```
-
-Total: **13 application files** (not counting tests, infra, and config).
 
 ---
 
 ## Testing Strategy
 
-- `pytest` + FastAPI `TestClient` against a real test DB (in-memory SQLite or throwaway Postgres).
-- `moto` to mock S3 for upload/download/delete tests.
-- Shared fixtures in `conftest.py`: authenticated client, seeded data, mocked S3 bucket.
-- CI runs `ruff check .` then `pytest --cov=app` on every push.
+| Layer | Approach |
+|---|---|
+| Domain services | Pure unit tests — no DB, no HTTP. Pass Pydantic models in, assert models out. |
+| API endpoints | `httpx.TestClient` with SQLite in-memory DB (via `get_db` override). Cover all success + error paths. |
+| S3 integration | `moto` mocks S3 in tests. No real AWS calls. |
+| Linting | `ruff check .` in CI. |
+
+**Fixtures** (`conftest.py`): `db`, `client`, `auth_client`, `sample_inventory_csv`, `mock_s3`.
+
+---
+
+## CI/CD Pipeline
+
+```mermaid
+graph LR
+    A["Push / PR"] --> B["Lint\nruff check ."]
+    B --> C["Test\npytest"]
+    C --> D["Build\ndocker build"]
+    D --> E["Push\nghcr.io"]
+```
+
+Three-stage GitHub Actions workflow. Stages run sequentially; a failure in any
+stage stops the pipeline.
 
 ---
 
 ## Assumptions
 
-- [ASSUMED] JWT is stateless; no server-side revocation.
-- [ASSUMED] Accepted file types: PDF and DOCX (validated by MIME type).
-- [ASSUMED] `PUT /document/<id>` replaces the file, not just metadata.
-- [ASSUMED] `POST /invite` returns `404` if the target login doesn't exist.
-- [ASSUMED] DB schema created via `Base.metadata.create_all()` on app startup. No migration tool.
-
----
-
-> The CI/CD deploy step will be a commented-out placeholder in `ci.yml` until the deployment
-> target is agreed with the mentor. The lint → test → build/push steps are the same regardless of target.
+- SQLite in-memory is used for tests; PostgreSQL for docker-compose.
+- Wave thresholds are constants in `scoring.py`.
+- Scoring weights are hardcoded (no external config).
+- LocalStack provides S3 in local development.
