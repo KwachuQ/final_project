@@ -45,7 +45,7 @@ graph TD
 
 | Component | File(s) | What it does |
 |---|---|---|
-| **App entry point** | `app/main.py` | Creates FastAPI app, registers routers, runs `create_all()` on startup |
+| **App entry point** | `app/main.py` | Creates FastAPI app, configures CORS middleware, registers routers, runs `create_all()` on startup |
 | **Settings** | `app/settings.py` | `pydantic-settings` class; `get_settings()` cached dependency |
 | **Database** | `app/database.py` | `Base`, `engine`, `SessionLocal`, `get_db()` dependency; ORM models `UserModel`, `AssessmentModel`, `ScoredSystemModel` |
 | **Schemas** | `app/schemas.py` | Pydantic v2 models for domain types (`SystemInventory`, `ScoredSystem`, enums) and API request/response shapes |
@@ -62,8 +62,8 @@ graph TD
 
 | Module | Function signature |
 |---|---|
-| `loader.py` | `parse_inventory(data: bytes) -> list[SystemInventory]` |
-| `scoring.py` | `score_systems(systems: list[SystemInventory]) -> list[ScoredSystem]` |
+| `loader.py` | `parse_inventory(data: bytes) -> list[SystemInventory]` — parses and validates the inventory CSV; returns structured JSON errors with row numbers and field names on failure |
+| `scoring.py` | `score_systems(systems: list[SystemInventory]) -> list[ScoredSystem]` — computes complexity, cloud_fit, and risk scores using hardcoded weights; derives a weighted composite score; assigns a migration wave (`quick_win`, `standard`, `complex`) based on score thresholds; applies the **6 Rs strategy** (Retire, Repurchase, Retain, Rehost, Replatform, Refactor) based on system attributes and scores; estimates `effort_min` / `effort_max` in person-days |
 
 Services take Pydantic models in, return Pydantic models out. No side effects.
 
@@ -76,13 +76,18 @@ Services take Pydantic models in, return Pydantic models out. No side effects.
 ```
 Client → POST /assessments (multipart: CSV + optional name)
   → get_current_user()                # JWT check
-  → loader.parse_inventory(csv_bytes) # parse + validate CSV first
-  → scoring.score_systems(systems)    # score + wave + effort
+  → loader.parse_inventory(csv_bytes) # parse + validate CSV first (structured errors with row numbers)
+  → scoring.score_systems(systems)    # score + wave + effort + 6 Rs strategy
   → s3.upload_file(key, csv_bytes)    # store file in S3 (only after validation)
   → db.add(AssessmentModel)
   → db.add_all(ScoredSystemModel rows)
   → db.commit()
   ← 201 {full assessment with scored systems}
+
+  ⚠ On db.commit() failure:
+    → catch exception
+    → s3.delete_file(key)             # compensating action — remove orphaned file from S3
+    ← 500 {error: "..."}
 ```
 
 ### Read / Delete
@@ -172,7 +177,6 @@ final_project/
 ├── Dockerfile
 ├── docker-compose.yml       # app + postgres + localstack
 ├── pyproject.toml
-├── .env.example
 └── README.md
 ```
 
@@ -183,11 +187,11 @@ final_project/
 | Layer | Approach |
 |---|---|
 | Domain services | Pure unit tests — no DB, no HTTP. Pass Pydantic models in, assert models out. |
-| API endpoints | `httpx.TestClient` with SQLite in-memory DB (via `get_db` override). Cover all success + error paths. |
+| API endpoints | `httpx.TestClient` with PostgreSQL 16 instance via testcontainers (ephemeral Docker container). Covers all success + error paths. |
 | S3 integration | `moto` mocks S3 in tests. No real AWS calls. |
 | Linting | `ruff check .` in CI. |
 
-**Fixtures** (`conftest.py`): `db`, `client`, `auth_client`, `sample_inventory_csv`, `mock_s3`.
+**Fixtures** (`conftest.py`): `db` (testcontainers PostgreSQL engine, creates all tables, yields session, drops/rolls back after suite), `client` (TestClient with overridden `get_db`), `auth_client` (pre-registered + logged-in user with JWT in headers), `sample_inventory_csv` (temporary CSV with valid test data), `mock_s3`.
 
 ---
 
@@ -208,7 +212,7 @@ stage stops the pipeline.
 
 ## Assumptions
 
-- SQLite in-memory is used for tests; PostgreSQL for docker-compose.
+- Testcontainers provides PostgreSQL 16 in tests (ephemeral Docker container); PostgreSQL for docker-compose.
 - Wave thresholds are constants in `scoring.py`.
 - Scoring weights are hardcoded (no external config).
 - LocalStack provides S3 in local development.
