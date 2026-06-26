@@ -124,7 +124,7 @@ Once loaded, JS in the page:
 - **Services are pure functions** — No DB, no HTTP inside services. Easy to
   test in isolation.
 - **Flat file layout** — Everything in `app/` as flat files, not nested
-  sub-packages. Easier to navigate for a learner.
+  sub-packages. 
 - **S3 for file storage, not for processing** — The CSV is stored in S3 for
   record-keeping. The scoring pipeline reads from the uploaded bytes directly,
   not from S3.
