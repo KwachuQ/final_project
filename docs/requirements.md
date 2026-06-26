@@ -229,7 +229,7 @@ All runtime config is read from environment variables via `pydantic-settings`:
 | `ALLOWED_ORIGINS` | No | CORS origins (comma-separated) | `http://localhost:3000` |
 | `AWS_ACCESS_KEY_ID` | No | S3 credentials | — |
 | `AWS_SECRET_ACCESS_KEY` | No | S3 credentials | — |
-| `AWS_REGION` | No | AWS region (default: `eu-west-1`) | `eu-west-1` |
+| `AWS_REGION` | No | AWS region (default: `eu-central-1`) | `eu-central-1` |
 | `AWS_BUCKET_NAME` | No | S3 bucket name | `pymig-uploads` |
 | `AWS_ENDPOINT_URL` | No | LocalStack URL for local dev | `http://localstack:4566` |
 

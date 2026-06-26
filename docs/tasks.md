@@ -39,7 +39,36 @@ Tasks within a phase that share the same parent can be done in any order.
 4. Declare dev dependencies: `pytest`, `httpx`, `ruff`, `testcontainers[postgresql]`, `moto`
 5. Add `[tool.ruff]` config section with line-length 120 and target-version py312
 
-**Verify:** `uv pip freeze` shows all declared packages installable.
+**Verify:** `tests/test_task01_project_setup.py`
+```python
+import tomllib
+from pathlib import Path
+
+def test_pyproject_exists():
+    assert Path("pyproject.toml").exists()
+
+def test_pyproject_metadata():
+    data = tomllib.loads(Path("pyproject.toml").read_text())
+    assert data["project"]["name"] == "pymigscore"
+    assert data["project"]["requires-python"] == ">=3.12"
+
+def test_pyproject_dependencies():
+    data = tomllib.loads(Path("pyproject.toml").read_text())
+    deps = data["project"]["dependencies"]
+    for pkg in ["fastapi", "uvicorn", "sqlalchemy", "psycopg2-binary", "pydantic-settings", "python-multipart", "pyjwt", "passlib", "boto3", "jinja2", "python-dotenv"]:
+        assert any(pkg in d for d in deps), f"{pkg} missing from dependencies"
+
+def test_pyproject_dev_dependencies():
+    data = tomllib.loads(Path("pyproject.toml").read_text())
+    dev_deps = data.get("project", {}).get("optional-dependencies", {}).get("dev", [])
+    for pkg in ["pytest", "httpx", "ruff", "testcontainers", "moto"]:
+        assert any(pkg in d for d in dev_deps), f"{pkg} missing from dev dependencies"
+
+def test_ruff_config():
+    data = tomllib.loads(Path("pyproject.toml").read_text())
+    assert data["tool"]["ruff"]["line-length"] == 120
+    assert data["tool"]["ruff"]["target-version"] == "py312"
+```
 
 ---
 
@@ -50,11 +79,31 @@ Tasks within a phase that share the same parent can be done in any order.
 **Build:**
 1. Create `app/__init__.py` (empty)
 2. Create `app/settings.py` with a `Settings` class extending `BaseSettings`
-3. Add fields matching the config table from requirements: `DATABASE_URL`, `SECRET_KEY`, `ALLOWED_ORIGINS` (optional), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` (default `eu-west-1`), `AWS_BUCKET_NAME`, `AWS_ENDPOINT_URL` (optional)
+3. Add fields matching the config table from requirements: `DATABASE_URL`, `SECRET_KEY`, `ALLOWED_ORIGINS` (optional), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` (default `eu-central-1`), `AWS_BUCKET_NAME`, `AWS_ENDPOINT_URL` (optional)
 4. Add `model_config` with `env_file=".env"` so local overrides work
 5. Create a cached `get_settings()` function using `@lru_cache`
 
-**Verify:** Run `python -c "from app.settings import get_settings; s = get_settings(); print(s.DATABASE_URL)"` and confirm it prints the default or env value without errors.
+**Verify:** `tests/test_task02_settings.py`
+```python
+def test_settings_loads_defaults(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@localhost/test")
+    monkeypatch.setenv("SECRET_KEY", "testsecret")
+    from app.settings import Settings
+    s = Settings()
+    assert s.AWS_REGION == "eu-central-1"
+    assert s.DATABASE_URL == "postgresql://test:test@localhost/test"
+
+def test_settings_aws_endpoint_url_optional(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@localhost/test")
+    monkeypatch.setenv("SECRET_KEY", "testsecret")
+    from app.settings import Settings
+    s = Settings()
+    assert s.AWS_ENDPOINT_URL is None
+
+def test_get_settings_is_cached():
+    from app.settings import get_settings
+    assert get_settings() is get_settings()
+```
 
 ---
 
@@ -68,7 +117,23 @@ Tasks within a phase that share the same parent can be done in any order.
 3. Create `SessionLocal` sessionmaker
 4. Implement `get_db()` generator that yields a session and closes it
 
-**Verify:** Run `python -c "from app.database import engine; engine.connect()"` — should succeed (may need a DB running, else note it requires PostgreSQL).
+**Verify:** `tests/test_task03_database.py`
+```python
+def test_base_is_declarative():
+    from app.database import Base
+    assert hasattr(Base, "metadata")
+
+def test_get_db_yields_session():
+    """Verify get_db is a generator that yields a session and closes it."""
+    from app.database import get_db
+    gen = get_db()
+    session = next(gen)
+    assert session is not None
+    try:
+        next(gen)
+    except StopIteration:
+        pass  # expected — generator closes
+```
 
 ---
 
@@ -83,7 +148,24 @@ Tasks within a phase that share the same parent can be done in any order.
 4. Register the health router (create `app/routers/__init__.py` empty and `app/routers/health.py`) with a `GET /health` endpoint returning `{"status": "ok"}`
 5. Expose the FastAPI app at module level via `app = create_app()`
 
-**Verify:** Run `uvicorn app.main:app --host 0.0.0.0 --port 8000` and `curl http://localhost:8000/health` returns `{"status":"ok"}`.
+**Verify:** `tests/test_task04_health.py`
+```python
+from fastapi.testclient import TestClient
+
+def test_health_endpoint():
+    from app.main import app
+    client = TestClient(app)
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+def test_cors_middleware_present():
+    from app.main import app
+    middleware_classes = [type(m).__name__ for m in app.user_middleware]
+    # CORS middleware should be registered
+    assert any("CORS" in name or "cors" in name for name in middleware_classes) or \
+        any("CORSMiddleware" in str(m) for m in app.user_middleware)
+```
 
 ---
 
@@ -95,11 +177,33 @@ Tasks within a phase that share the same parent can be done in any order.
 1. Create a multi-stage `Dockerfile` (builder stage + runtime stage)
 2. Use `python:3.12-slim` as base, install dependencies, copy app code
 3. Create `docker-compose.yml` with three services: `app`, `db` (postgres:16-alpine), `localstack` (localstack/localstack)
-4. Wire environment variables: `DATABASE_URL=postgresql://pymig:pymig@db:5432/pymig`, `AWS_ENDPOINT_URL=http://localstack:4566`, `AWS_BUCKET_NAME=pymig-uploads`, `AWS_ACCESS_KEY_ID=test`, `AWS_SECRET_ACCESS_KEY=test`, `AWS_REGION=eu-west-1`
+4. Wire environment variables: `DATABASE_URL=postgresql://pymig:pymig@db:5432/pymig`, `AWS_ENDPOINT_URL=http://localstack:4566`, `AWS_BUCKET_NAME=pymig-uploads`, `AWS_ACCESS_KEY_ID=test`, `AWS_SECRET_ACCESS_KEY=test`, `AWS_REGION=eu-central-1`
 5. Add a healthcheck for the `app` service that curls `/health`
 6. Add a volume for LocalStack data persistence
 
-**Verify:** `docker compose up --build` starts all three services, and `curl http://localhost:8000/health` returns `{"status":"ok"}`.
+**Verify:** `tests/test_task05_docker.py`
+```python
+from pathlib import Path
+import re
+
+def test_dockerfile_exists():
+    assert Path("Dockerfile").exists()
+
+def test_dockerfile_multistage():
+    content = Path("Dockerfile").read_text()
+    assert content.lower().count("from ") >= 2, "Dockerfile should be multi-stage"
+
+def test_compose_file_exists():
+    assert Path("docker-compose.yml").exists() or Path("docker-compose.yaml").exists()
+
+def test_compose_has_required_services():
+    import yaml
+    path = Path("docker-compose.yml") if Path("docker-compose.yml").exists() else Path("docker-compose.yaml")
+    compose = yaml.safe_load(path.read_text())
+    services = compose.get("services", {}).keys()
+    for svc in ["app", "db", "localstack"]:
+        assert svc in services, f"{svc} service missing from docker-compose"
+```
 
 ---
 
@@ -116,7 +220,22 @@ Tasks within a phase that share the same parent can be done in any order.
 2. Define columns: `id` (Integer PK, auto-increment), `username` (String, unique, not null), `password_hash` (String, not null), `created_at` (DateTime, default=utcnow)
 3. Add `__tablename__ = "users"`
 
-**Verify:** After startup, `Base.metadata.create_all()` creates the `users` table. Connect to the DB and run `\dt` to confirm it exists.
+**Verify:** `tests/test_task06_user_model.py`
+```python
+def test_user_model_table_name():
+    from app.database import UserModel
+    assert UserModel.__tablename__ == "users"
+
+def test_user_model_columns():
+    from app.database import UserModel
+    columns = {c.name for c in UserModel.__table__.columns}
+    assert {"id", "username", "password_hash", "created_at"} <= columns
+
+def test_username_is_unique():
+    from app.database import UserModel
+    col = UserModel.__table__.c.username
+    assert col.unique is True
+```
 
 ---
 
@@ -132,7 +251,31 @@ Tasks within a phase that share the same parent can be done in any order.
 5. Define `TokenResponse` with `access_token: str`, `token_type: str`
 6. Define `ErrorResponse` with `detail: str` for consistent error shapes
 
-**Verify:** Run `python -c "from app.schemas import UserRegister, UserResponse, TokenResponse; print('OK')"`.
+**Verify:** `tests/test_task07_auth_schemas.py`
+```python
+import pytest
+from app.schemas import UserRegister, UserResponse, TokenResponse, ErrorResponse
+
+def test_user_register_valid():
+    u = UserRegister(username="alice", password="secret", password_repeat="secret")
+    assert u.username == "alice"
+
+def test_user_register_password_mismatch():
+    with pytest.raises(ValueError):
+        UserRegister(username="alice", password="secret", password_repeat="wrong")
+
+def test_user_response_fields():
+    r = UserResponse(user_id=1, username="alice")
+    assert r.user_id == 1
+
+def test_token_response_fields():
+    t = TokenResponse(access_token="abc", token_type="bearer")
+    assert t.access_token == "abc"
+
+def test_error_response_fields():
+    e = ErrorResponse(detail="not found")
+    assert e.detail == "not found"
+```
 
 ---
 
@@ -146,20 +289,39 @@ Tasks within a phase that share the same parent can be done in any order.
 3. `POST /login` — accept `OAuth2PasswordRequestForm`, look up user by username, verify password with passlib, generate a JWT (HS256, 1-hour expiry, `sub=user_id`), return `TokenResponse`
 4. Register the auth router in `app/main.py`
 
-**Verify:** Start the app. Run:
+**Verify:** `tests/test_task08_auth_endpoints.py`
+```python
+def test_register_returns_201(client):
+    resp = client.post("/auth/register", json={
+        "username": "alice", "password": "secret123", "password_repeat": "secret123"
+    })
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["username"] == "alice"
+    assert "user_id" in data
+
+def test_register_duplicate_returns_409(client):
+    payload = {"username": "dup", "password": "secret123", "password_repeat": "secret123"}
+    client.post("/auth/register", json=payload)
+    resp = client.post("/auth/register", json=payload)
+    assert resp.status_code == 409
+
+def test_login_returns_token(client):
+    client.post("/auth/register", json={
+        "username": "bob", "password": "secret123", "password_repeat": "secret123"
+    })
+    resp = client.post("/auth/login", data={"username": "bob", "password": "secret123"})
+    assert resp.status_code == 200
+    assert "access_token" in resp.json()
+    assert resp.json()["token_type"] == "bearer"
+
+def test_login_wrong_password_returns_401(client):
+    client.post("/auth/register", json={
+        "username": "carol", "password": "secret123", "password_repeat": "secret123"
+    })
+    resp = client.post("/auth/login", data={"username": "carol", "password": "wrong"})
+    assert resp.status_code == 401
 ```
-curl -X POST http://localhost:8000/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"username":"alice","password":"secret123","password_repeat":"secret123"}'
-```
-Expect `201 {"user_id": 1, "username": "alice"}`.
-Then:
-```
-curl -X POST http://localhost:8000/auth/login \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d 'username=alice&password=secret123'
-```
-Expect `200 {"access_token": "...", "token_type": "bearer"}`.
 
 ---
 
@@ -175,7 +337,43 @@ Expect `200 {"access_token": "...", "token_type": "bearer"}`.
 5. Raise `HTTPException(401)` if the token is missing, invalid, expired, or the user doesn't exist
 6. Define `oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")` for Swagger UI integration
 
-**Verify:** Call a protected endpoint (e.g., `GET /assessments` — even if it returns no data yet) with and without the token. Without: `401`. With valid token: `200 []`. With expired token: `401`.
+**Verify:** `tests/test_task09_jwt_dependency.py`
+
+Note: these tests use `get_current_user` directly as a unit, since the `/assessments` router does not exist yet at this phase.
+
+```python
+import pytest
+from unittest.mock import MagicMock
+
+def test_valid_token_returns_user(db):
+    import jwt, time
+    from app.settings import get_settings
+    from app.database import UserModel
+    from app.deps import get_current_user
+    user = UserModel(id=1, username="test", password_hash="x")
+    db.add(user)
+    db.commit()
+    token = jwt.encode({"sub": 1, "exp": int(time.time()) + 3600}, get_settings().SECRET_KEY, algorithm="HS256")
+    result = get_current_user(token=token, db=db)
+    assert result.username == "test"
+
+def test_expired_token_raises_401(db):
+    import jwt, time
+    from fastapi import HTTPException
+    from app.settings import get_settings
+    from app.deps import get_current_user
+    token = jwt.encode({"sub": 1, "exp": int(time.time()) - 10}, get_settings().SECRET_KEY, algorithm="HS256")
+    with pytest.raises(HTTPException) as exc_info:
+        get_current_user(token=token, db=db)
+    assert exc_info.value.status_code == 401
+
+def test_invalid_token_raises_401(db):
+    from fastapi import HTTPException
+    from app.deps import get_current_user
+    with pytest.raises(HTTPException) as exc_info:
+        get_current_user(token="garbage", db=db)
+    assert exc_info.value.status_code == 401
+```
 
 ---
 
@@ -195,7 +393,41 @@ Expect `200 {"access_token": "...", "token_type": "bearer"}`.
 5. Define `AssessmentDetail` response model with: id, name, created_at, system_count, s3_key, scored_systems (list of ScoredSystem)
 6. Define `AssessmentCreateResponse` with: id, name, created_at, system_count, s3_key, scored_systems
 
-**Verify:** Run `python -c "from app.schemas import SystemInventory, ScoredSystem, SystemTypeEnum, WaveEnum; print('OK')"`.
+**Verify:** `tests/test_task10_domain_schemas.py`
+```python
+from app.schemas import (
+    SystemTypeEnum, OperatingSystemEnum, LanguageEnum,
+    AvailabilityEnum, WaveEnum, StrategyEnum,
+    SystemInventory, ScoredSystem, AssessmentSummary, AssessmentDetail,
+    AssessmentCreateResponse,
+)
+
+def test_system_type_enum_values():
+    assert set(SystemTypeEnum) == {SystemTypeEnum.web_app, SystemTypeEnum.database, SystemTypeEnum.batch_job, SystemTypeEnum.file_server}
+
+def test_system_inventory_accepts_valid_data():
+    si = SystemInventory(
+        system_name="erp", system_type="web_app", operating_system="linux",
+        language="python", num_users=100, data_size_gb=10.0,
+        availability="high", has_compliance=False, is_vendor_software=False,
+    )
+    assert si.system_name == "erp"
+    assert si.system_type == SystemTypeEnum.web_app
+
+def test_scored_system_fields():
+    ss = ScoredSystem(
+        system_name="erp", system_type="web_app",
+        composite_score=5.0, complexity_score=3.0, cloud_fit_score=7.0, risk_score=4.0,
+        wave="standard", recommended_strategy="rehost", effort_min=10, effort_max=30,
+    )
+    assert ss.wave == WaveEnum.standard
+    assert ss.recommended_strategy == StrategyEnum.rehost
+
+def test_assessment_summary_fields():
+    from datetime import datetime
+    s = AssessmentSummary(id=1, name="test", created_at=datetime.now(), system_count=5)
+    assert s.system_count == 5
+```
 
 ---
 
@@ -213,7 +445,40 @@ Expect `200 {"access_token": "...", "token_type": "bearer"}`.
 7. After all rows are parsed, check for duplicate `system_name` values and fail with errors if any exist
 8. If any errors occurred, raise a custom `CSVValidationError` containing all error details
 
-**Verify:** Create a valid CSV and an invalid CSV. Call `parse_inventory()` on both and confirm the valid one returns `SystemInventory` objects and the invalid one raises `CSVValidationError` with row-numbered errors.
+**Verify:** `tests/test_task11_loader.py`
+```python
+import pytest
+from app.services.loader import parse_inventory, CSVValidationError
+
+VALID_CSV = (
+    b"system_name,system_type,operating_system,language,num_users,data_size_gb,availability,has_compliance,is_vendor_software\n"
+    b"erp,web_app,linux,python,100,10.0,high,false,false\n"
+)
+
+def test_valid_csv_returns_inventory_list():
+    result = parse_inventory(VALID_CSV)
+    assert len(result) == 1
+    assert result[0].system_name == "erp"
+
+def test_invalid_csv_raises_with_row_numbers():
+    bad = b"system_name,system_type,operating_system,language,num_users,data_size_gb,availability,has_compliance,is_vendor_software\n" \
+          b"erp,INVALID,linux,python,100,10.0,high,false,false\n"
+    with pytest.raises(CSVValidationError) as exc_info:
+        parse_inventory(bad)
+    assert any("row" in str(e).lower() or "1" in str(e) for e in exc_info.value.errors)
+
+def test_duplicate_system_names_raises():
+    dup = VALID_CSV + b"erp,web_app,linux,python,50,5.0,low,false,false\n"
+    with pytest.raises(CSVValidationError):
+        parse_inventory(dup)
+
+def test_exceeding_1000_rows_raises():
+    header = b"system_name,system_type,operating_system,language,num_users,data_size_gb,availability,has_compliance,is_vendor_software\n"
+    row = b"sys_%d,web_app,linux,python,10,1.0,low,false,false\n"
+    data = header + b"".join(row.replace(b"%d", str(i).encode()) for i in range(1001))
+    with pytest.raises((CSVValidationError, ValueError)):
+        parse_inventory(data)
+```
 
 ---
 
@@ -238,7 +503,43 @@ Expect `200 {"access_token": "...", "token_type": "bearer"}`.
 8. Implement `_estimate_effort(strategy, system)` — return (effort_min, effort_max) in person-days
 9. Implement `score_systems(systems: list[SystemInventory]) -> list[ScoredSystem]` that orchestrates all of the above
 
-**Verify:** Create a `SystemInventory` for a retired system (num_users=0) and call `score_systems([...])`. Assert `recommended_strategy == "retire"`, `wave == "quick_win"`, `effort_min == 0`, `effort_max == 0`.
+**Verify:** `tests/test_task12_scoring.py`
+```python
+from app.schemas import SystemInventory
+from app.services.scoring import score_systems
+
+def _make_system(**overrides):
+    defaults = dict(
+        system_name="test", system_type="web_app", operating_system="linux",
+        language="python", num_users=100, data_size_gb=10.0,
+        availability="high", has_compliance=False, is_vendor_software=False,
+    )
+    defaults.update(overrides)
+    return SystemInventory(**defaults)
+
+def test_retire_strategy():
+    result = score_systems([_make_system(num_users=0)])
+    assert result[0].recommended_strategy.value == "retire"
+    assert result[0].wave.value == "quick_win"
+    assert result[0].effort_min == 0
+    assert result[0].effort_max == 0
+
+def test_repurchase_strategy():
+    result = score_systems([_make_system(is_vendor_software=True)])
+    assert result[0].recommended_strategy.value == "repurchase"
+
+def test_retain_strategy():
+    result = score_systems([_make_system(language="cobol", has_compliance=True)])
+    assert result[0].recommended_strategy.value == "retain"
+
+def test_scores_are_bounded_0_to_10():
+    result = score_systems([_make_system()])
+    for s in result:
+        assert 0 <= s.complexity_score <= 10
+        assert 0 <= s.cloud_fit_score <= 10
+        assert 0 <= s.risk_score <= 10
+        assert 0 <= s.composite_score <= 10
+```
 
 ---
 
@@ -256,7 +557,30 @@ Expect `200 {"access_token": "...", "token_type": "bearer"}`.
 3. Add a relationship from `AssessmentModel` to `ScoredSystemModel` (one-to-many, cascade="all, delete-orphan")
 4. Add a relationship from `UserModel` to `AssessmentModel`
 
-**Verify:** After startup, confirm `assessments` and `scored_systems` tables are created with correct columns and foreign keys.
+**Verify:** `tests/test_task13_assessment_models.py`
+```python
+def test_assessment_model_table():
+    from app.database import AssessmentModel
+    assert AssessmentModel.__tablename__ == "assessments"
+    columns = {c.name for c in AssessmentModel.__table__.columns}
+    assert {"id", "user_id", "name", "created_at", "system_count", "s3_key"} <= columns
+
+def test_scored_system_model_table():
+    from app.database import ScoredSystemModel
+    assert ScoredSystemModel.__tablename__ == "scored_systems"
+    columns = {c.name for c in ScoredSystemModel.__table__.columns}
+    assert {"id", "assessment_id", "system_name", "system_type", "composite_score", "complexity_score", "cloud_fit_score", "risk_score", "wave", "recommended_strategy", "effort_min", "effort_max"} <= columns
+
+def test_assessment_cascade_relationship():
+    from app.database import AssessmentModel
+    rel = AssessmentModel.__mapper__.relationships["scored_systems"]
+    assert "delete" in rel.cascade
+
+def test_user_id_foreign_key():
+    from app.database import AssessmentModel
+    fks = [fk.target_fullname for fk in AssessmentModel.__table__.c.user_id.foreign_keys]
+    assert "users.id" in fks
+```
 
 ---
 
@@ -272,7 +596,38 @@ Expect `200 {"access_token": "...", "token_type": "bearer"}`.
 5. If the bucket doesn't exist on first upload, create it automatically (idempotent via `BucketAlreadyExists` handling)
 6. Handle `ClientError` gracefully by re-raising as `RuntimeError`
 
-**Verify:** Write a test that creates a moto mock S3, calls `upload_file("test.csv", b"data")`, and then calls `get_s3_client().get_object(Bucket=settings.AWS_BUCKET_NAME, Key="test.csv")` — confirm the content matches.
+**Verify:** `tests/test_task14_s3.py`
+```python
+import pytest
+from moto import mock_aws
+
+@pytest.fixture
+def s3_env(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@localhost/test")
+    monkeypatch.setenv("SECRET_KEY", "testsecret")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
+    monkeypatch.setenv("AWS_REGION", "eu-central-1")
+    monkeypatch.setenv("AWS_BUCKET_NAME", "test-bucket")
+
+@mock_aws
+def test_upload_and_retrieve(s3_env):
+    from app.s3 import upload_file, get_s3_client
+    from app.settings import get_settings
+    upload_file("test.csv", b"hello")
+    obj = get_s3_client().get_object(Bucket=get_settings().AWS_BUCKET_NAME, Key="test.csv")
+    assert obj["Body"].read() == b"hello"
+
+@mock_aws
+def test_delete_file(s3_env):
+    from app.s3 import upload_file, delete_file, get_s3_client
+    from app.settings import get_settings
+    upload_file("del.csv", b"data")
+    delete_file("del.csv")
+    import botocore.exceptions
+    with pytest.raises(botocore.exceptions.ClientError):
+        get_s3_client().get_object(Bucket=get_settings().AWS_BUCKET_NAME, Key="del.csv")
+```
 
 ---
 
@@ -292,14 +647,28 @@ Expect `200 {"access_token": "...", "token_type": "bearer"}`.
 9. Return `201` with the full assessment detail
 10. Register the router in `app/main.py`
 
-**Verify:** Upload a valid CSV via curl:
+**Verify:** `tests/test_task15_create_assessment.py`
+```python
+import io
+
+VALID_CSV = (
+    "system_name,system_type,operating_system,language,num_users,data_size_gb,availability,has_compliance,is_vendor_software\n"
+    "erp,web_app,linux,python,100,10.0,high,false,false\n"
+)
+
+def test_create_assessment_returns_201(auth_client, mock_s3):
+    resp = auth_client.post("/assessments", files={"inventory": ("test.csv", io.BytesIO(VALID_CSV.encode()), "text/csv")}, data={"name": "My Assessment"})
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["name"] == "My Assessment"
+    assert data["system_count"] == 1
+    assert len(data["scored_systems"]) == 1
+
+def test_create_assessment_invalid_csv_returns_400(auth_client, mock_s3):
+    bad_csv = b"system_name,system_type\nfoo,INVALID\n"
+    resp = auth_client.post("/assessments", files={"inventory": ("bad.csv", io.BytesIO(bad_csv), "text/csv")})
+    assert resp.status_code == 400
 ```
-curl -X POST http://localhost:8000/assessments \
-  -H "Authorization: Bearer <token>" \
-  -F "inventory=@valid.csv" \
-  -F "name=My Assessment"
-```
-Expect `201` with full assessment JSON including scored_systems.
 
 ---
 
@@ -312,12 +681,37 @@ Expect `201` with full assessment JSON including scored_systems.
 2. `GET /assessments/{id}` — get assessment by id, verify ownership (return `403` if not owner, `404` if not found), eager-load `scored_systems`, return `AssessmentDetail`
 3. `DELETE /assessments/{id}` — verify ownership, call `s3.delete_file()` to remove the CSV, delete the assessment (cascade deletes scored systems), return `204`
 
-**Verify:**
-```
-curl http://localhost:8000/assessments -H "Authorization: Bearer <token>"       # 200 []
-curl http://localhost:8000/assessments/1 -H "Authorization: Bearer <token>"     # 200 detail
-curl -X DELETE http://localhost:8000/assessments/1 -H "Authorization: Bearer <token>"  # 204
-curl http://localhost:8000/assessments/1 -H "Authorization: Bearer <token>"     # 404
+**Verify:** `tests/test_task16_assessment_crud.py`
+```python
+import io
+
+VALID_CSV = (
+    "system_name,system_type,operating_system,language,num_users,data_size_gb,availability,has_compliance,is_vendor_software\n"
+    "erp,web_app,linux,python,100,10.0,high,false,false\n"
+)
+
+def test_list_assessments_empty(auth_client, mock_s3):
+    resp = auth_client.get("/assessments")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+def test_get_assessment_detail(auth_client, mock_s3):
+    create = auth_client.post("/assessments", files={"inventory": ("t.csv", io.BytesIO(VALID_CSV.encode()), "text/csv")})
+    aid = create.json()["id"]
+    resp = auth_client.get(f"/assessments/{aid}")
+    assert resp.status_code == 200
+    assert "scored_systems" in resp.json()
+
+def test_delete_assessment(auth_client, mock_s3):
+    create = auth_client.post("/assessments", files={"inventory": ("t.csv", io.BytesIO(VALID_CSV.encode()), "text/csv")})
+    aid = create.json()["id"]
+    resp = auth_client.delete(f"/assessments/{aid}")
+    assert resp.status_code == 204
+    assert auth_client.get(f"/assessments/{aid}").status_code == 404
+
+def test_get_nonexistent_assessment_returns_404(auth_client, mock_s3):
+    resp = auth_client.get("/assessments/9999")
+    assert resp.status_code == 404
 ```
 
 ---
@@ -342,7 +736,25 @@ curl http://localhost:8000/assessments/1 -H "Authorization: Bearer <token>"     
    - Embedded `<script>` with all JS logic (no external libraries)
 5. Register the dashboard router in `app/main.py`
 
-**Verify:** Open `http://localhost:8000/dashboard` in a browser. The login form appears. Log in with valid credentials. The assessment list loads. Click an assessment to see the scored systems table.
+**Verify:** `tests/test_task17_dashboard.py`
+```python
+from fastapi.testclient import TestClient
+
+def test_dashboard_returns_html(client):
+    resp = client.get("/dashboard")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+
+def test_dashboard_contains_login_form(client):
+    resp = client.get("/dashboard")
+    html = resp.text.lower()
+    assert "login" in html
+    assert "<form" in html or "<input" in html
+
+def test_dashboard_contains_app_name(client):
+    resp = client.get("/dashboard")
+    assert "PyMigScore" in resp.text or "pymigscore" in resp.text.lower()
+```
 
 ---
 
@@ -362,7 +774,27 @@ curl http://localhost:8000/assessments/1 -H "Authorization: Bearer <token>"     
 5. Create `sample_inventory_csv` fixture that writes a valid CSV to a temp file and returns its path
 6. Create `mock_s3` fixture using moto to mock S3
 
-**Verify:** Run `pytest tests/conftest.py --collect-only` — all fixtures should be collected without errors.
+**Verify:** `tests/test_task18_conftest.py`
+```python
+def test_db_fixture_provides_session(db):
+    """The db fixture should yield a working SQLAlchemy session."""
+    assert db is not None
+    assert hasattr(db, "execute")
+
+def test_client_fixture_works(client):
+    """The client fixture should be a TestClient that can hit /health."""
+    resp = client.get("/health")
+    assert resp.status_code == 200
+
+def test_auth_client_has_auth_header(auth_client):
+    """The auth_client fixture should have a pre-set Authorization header."""
+    resp = auth_client.get("/assessments")
+    assert resp.status_code == 200  # not 401
+
+def test_mock_s3_fixture_isolates(mock_s3):
+    """The mock_s3 fixture should provide a working mocked S3 environment."""
+    assert mock_s3 is not None
+```
 
 ---
 
@@ -374,7 +806,10 @@ curl http://localhost:8000/assessments/1 -H "Authorization: Bearer <token>"     
 1. Create `tests/test_health.py`
 2. Test `GET /health` returns `{"status": "ok"}` with `200`
 
-**Verify:** `pytest tests/test_health.py -v` — one passing test.
+**Verify:** `pytest tests/test_health.py -v` — 1 test passes:
+```
+tests/test_health.py::test_health_returns_ok PASSED
+```
 
 ---
 
@@ -390,7 +825,15 @@ curl http://localhost:8000/assessments/1 -H "Authorization: Bearer <token>"     
 5. Test login with wrong password returns `401`
 6. Test accessing a protected endpoint without a token returns `401`
 
-**Verify:** `pytest tests/test_auth.py -v` — 6 passing tests.
+**Verify:** `pytest tests/test_auth.py -v` — 6 tests pass:
+```
+tests/test_auth.py::test_register_success PASSED
+tests/test_auth.py::test_register_duplicate_409 PASSED
+tests/test_auth.py::test_register_password_mismatch_400 PASSED
+tests/test_auth.py::test_login_success PASSED
+tests/test_auth.py::test_login_wrong_password_401 PASSED
+tests/test_auth.py::test_protected_without_token_401 PASSED
+```
 
 ---
 
@@ -405,7 +848,13 @@ curl http://localhost:8000/assessments/1 -H "Authorization: Bearer <token>"     
 4. Test duplicate system_names in CSV raises validation error
 5. Test CSV with >1000 rows raises an error
 
-**Verify:** `pytest tests/test_services/test_loader.py -v` — all passing.
+**Verify:** `pytest tests/test_services/test_loader.py -v` — 4 tests pass:
+```
+tests/test_services/test_loader.py::test_valid_csv_parses PASSED
+tests/test_services/test_loader.py::test_invalid_csv_raises PASSED
+tests/test_services/test_loader.py::test_duplicate_names_raises PASSED
+tests/test_services/test_loader.py::test_exceeding_1000_rows_raises PASSED
+```
 
 ---
 
@@ -424,7 +873,17 @@ curl http://localhost:8000/assessments/1 -H "Authorization: Bearer <token>"     
 8. Test wave assignment boundaries (3.9 → quick_win, 4.0 → standard, 7.0 → complex)
 9. Test composite_score is weighted average of three scores
 
-**Verify:** `pytest tests/test_services/test_scoring.py -v` — all passing.
+**Verify:** `pytest tests/test_services/test_scoring.py -v` — 8 tests pass:
+```
+tests/test_services/test_scoring.py::test_retire_strategy PASSED
+tests/test_services/test_scoring.py::test_repurchase_strategy PASSED
+tests/test_services/test_scoring.py::test_retain_strategy PASSED
+tests/test_services/test_scoring.py::test_rehost_strategy PASSED
+tests/test_services/test_scoring.py::test_replatform_strategy PASSED
+tests/test_services/test_scoring.py::test_refactor_strategy PASSED
+tests/test_services/test_scoring.py::test_wave_boundaries PASSED
+tests/test_services/test_scoring.py::test_composite_weighted_average PASSED
+```
 
 ---
 
@@ -443,7 +902,18 @@ curl http://localhost:8000/assessments/1 -H "Authorization: Bearer <token>"     
 8. Test compensating transaction: mock DB commit to fail, confirm S3 file is deleted
 9. Test CSV with >1000 rows returns `413`
 
-**Verify:** `pytest tests/test_assessments.py -v` — all passing.
+**Verify:** `pytest tests/test_assessments.py -v` — 9 tests pass:
+```
+tests/test_assessments.py::test_create_valid_csv_201 PASSED
+tests/test_assessments.py::test_create_invalid_csv_400 PASSED
+tests/test_assessments.py::test_list_assessments PASSED
+tests/test_assessments.py::test_get_detail PASSED
+tests/test_assessments.py::test_delete_204_then_404 PASSED
+tests/test_assessments.py::test_delete_other_user_403 PASSED
+tests/test_assessments.py::test_get_nonexistent_404 PASSED
+tests/test_assessments.py::test_compensating_transaction PASSED
+tests/test_assessments.py::test_csv_over_1000_rows_413 PASSED
+```
 
 ---
 
@@ -455,7 +925,11 @@ curl http://localhost:8000/assessments/1 -H "Authorization: Bearer <token>"     
 1. Test `GET /dashboard` returns `200` with `text/html` content type
 2. Test the HTML contains "PyMigScore" and "login" in the body (case-insensitive)
 
-**Verify:** `pytest tests/test_dashboard.py -v` — passing.
+**Verify:** `pytest tests/test_dashboard.py -v` — 2 tests pass:
+```
+tests/test_dashboard.py::test_dashboard_returns_html PASSED
+tests/test_dashboard.py::test_dashboard_contains_expected_content PASSED
+```
 
 ---
 
@@ -474,4 +948,30 @@ curl http://localhost:8000/assessments/1 -H "Authorization: Bearer <token>"     
 4. Job 2: `test` — needs lint, checkout, set up Python 3.12, install deps, run `pytest -v` (testcontainers handles PostgreSQL automatically)
 5. Job 3: `build` — needs test, checkout, run `docker build .`
 
-**Verify:** Push to GitHub. Open Actions tab — all three stages complete successfully.
+**Verify:** `tests/test_task25_ci.py`
+```python
+from pathlib import Path
+import yaml
+
+def test_ci_yml_exists():
+    assert Path(".github/workflows/ci.yml").exists()
+
+def test_ci_triggers():
+    ci = yaml.safe_load(Path(".github/workflows/ci.yml").read_text())
+    # PyYAML parses bare `on:` as boolean True
+    triggers = ci.get(True) or ci.get("on")
+    assert "push" in triggers
+    assert "pull_request" in triggers
+
+def test_ci_has_three_jobs():
+    ci = yaml.safe_load(Path(".github/workflows/ci.yml").read_text())
+    jobs = ci["jobs"]
+    assert "lint" in jobs
+    assert "test" in jobs
+    assert "build" in jobs
+
+def test_ci_job_ordering():
+    ci = yaml.safe_load(Path(".github/workflows/ci.yml").read_text())
+    assert "lint" in ci["jobs"]["test"]["needs"]
+    assert "test" in ci["jobs"]["build"]["needs"]
+```
