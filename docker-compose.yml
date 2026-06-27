@@ -1,0 +1,54 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://pymig:pymig@db:5432/pymig
+      SECRET_KEY: change_me_in_production
+      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_BUCKET_NAME: pymig-uploads
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: eu-central-1
+    depends_on:
+      db:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pymig
+      POSTGRES_PASSWORD: pymig
+      POSTGRES_DB: pymig
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pymig"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  localstack:
+    image: localstack/localstack
+    environment:
+      SERVICES: s3
+      AWS_DEFAULT_REGION: eu-central-1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - localstack_data:/var/lib/localstack
+
+volumes:
+  db_data:
+  localstack_data:
