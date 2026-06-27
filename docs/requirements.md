@@ -17,7 +17,7 @@ The project is designed to demonstrate:
 
 | Layer | Technology |
 |---|---|
-| Language | Python 3.12+ |
+| Language | Python 3.11+ |
 | Framework | FastAPI |
 | Templating | Jinja2 (FastAPI built-in support) |
 | Database | PostgreSQL 16 + SQLAlchemy ORM |
