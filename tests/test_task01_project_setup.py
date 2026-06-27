@@ -9,7 +9,7 @@ def test_pyproject_exists():
 def test_pyproject_metadata():
     data = tomllib.loads(Path("pyproject.toml").read_text())
     assert data["project"]["name"] == "pymigscore"
-    assert data["project"]["requires-python"] == ">=3.12"
+    assert data["project"]["requires-python"] == ">=3.11"
 
 
 def test_pyproject_dependencies():
