@@ -10,8 +10,6 @@ from app.database import UserModel, get_db
 from app.settings import get_settings
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
-settings = get_settings()
-
 
 def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
@@ -31,11 +29,10 @@ def get_current_user(
     try:
         payload = jwt.decode(
             token,
-            settings.SECRET_KEY,
+            get_settings().SECRET_KEY,
             algorithms=["HS256"],
-            options={"verify_sub": False},
         )
-        user_id: int | None = payload.get("sub")
+        user_id: int | None = int(sub) if (sub := payload.get("sub")) is not None else None
         if user_id is None:
             raise credentials_exception
     except PyJWTError:

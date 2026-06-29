@@ -13,7 +13,7 @@ from app.settings import get_settings
 router = APIRouter(prefix="/auth")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-settings = get_settings()
+
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED, response_model=UserResponse)
@@ -48,10 +48,10 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
     token = jwt.encode(
         {
-            "sub": user.id,
+            "sub": str(user.id),  # RFC 7519: sub must be a string
             "exp": int(time.time()) + 3600,  # 1 hour
         },
-        settings.SECRET_KEY,
+        get_settings().SECRET_KEY,
         algorithm="HS256",
     )
     return TokenResponse(access_token=token, token_type="bearer")
