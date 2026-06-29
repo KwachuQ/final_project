@@ -39,3 +39,5 @@ htmlcov/
 # Project-specific
 *.db
 *.sqlite3
+# Added by ggshield
+.cache_ggshield
