@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PyMigScore Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1e293b;
+      padding: 1rem 2rem;
+      border-bottom: 1px solid #334155;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    header h1 { font-size: 1.25rem; color: #38bdf8; }
+
+    #logout-btn {
+      background: #334155;
+      border: none;
+      color: #e2e8f0;
+      padding: 0.4rem 1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      display: none;
+    }
+
+    main { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+
+    /* ── Login card ── */
+    #login-section {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 2rem;
+      max-width: 400px;
+      margin: 4rem auto;
+    }
+
+    #login-section h2 { margin-bottom: 1.5rem; color: #38bdf8; }
+
+    label { display: block; font-size: 0.875rem; color: #94a3b8; margin-bottom: 0.25rem; }
+
+    input[type="text"],
+    input[type="password"] {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      background: #0f172a;
+      border: 1px solid #475569;
+      border-radius: 6px;
+      color: #e2e8f0;
+      margin-bottom: 1rem;
+      font-size: 1rem;
+    }
+
+    button[type="submit"], #login-btn {
+      width: 100%;
+      padding: 0.65rem;
+      background: #0ea5e9;
+      border: none;
+      border-radius: 6px;
+      color: white;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button[type="submit"]:hover, #login-btn:hover { background: #38bdf8; }
+
+    #login-error {
+      color: #f87171;
+      font-size: 0.875rem;
+      margin-top: 0.75rem;
+      display: none;
+    }
+
+    /* ── Dashboard ── */
+    #dashboard-section { display: none; }
+
+    #dashboard-section h2 { margin-bottom: 1rem; color: #94a3b8; font-size: 1rem; }
+
+    .assessment-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 0.75rem;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: border-color 0.15s;
+    }
+
+    .assessment-card:hover { border-color: #0ea5e9; }
+
+    .assessment-card .name { font-weight: 600; }
+
+    .assessment-card .meta { font-size: 0.8rem; color: #64748b; }
+
+    #empty-state { color: #475569; text-align: center; margin-top: 3rem; }
+
+    /* ── Detail table ── */
+    #detail-section { display: none; margin-top: 2rem; }
+
+    #detail-section h3 { margin-bottom: 1rem; }
+
+    #back-btn {
+      background: none;
+      border: none;
+      color: #38bdf8;
+      cursor: pointer;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+      padding: 0;
+    }
+
+    #back-btn:hover { text-decoration: underline; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    th {
+      background: #1e293b;
+      padding: 0.6rem 0.75rem;
+      text-align: left;
+      color: #94a3b8;
+      font-weight: 500;
+      border-bottom: 1px solid #334155;
+    }
+
+    td {
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid #1e293b;
+    }
+
+    tr:hover td { background: #1e293b; }
+
+    .wave-quick_win  { color: #4ade80; }
+    .wave-standard   { color: #facc15; }
+    .wave-complex    { color: #f87171; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>PyMigScore</h1>
+  <button id="logout-btn" onclick="logout()">Log out</button>
+</header>
+
+<main>
+
+  <!-- ── LOGIN ── -->
+  <section id="login-section">
+    <h2>Sign in</h2>
+    <form id="login-form">
+      <label for="username">Username</label>
+      <input id="username" type="text" autocomplete="username" required>
+
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+
+      <button type="submit" id="login-btn">Log in</button>
+      <p id="login-error">Invalid username or password.</p>
+    </form>
+  </section>
+
+  <!-- ── ASSESSMENT LIST ── -->
+  <section id="dashboard-section">
+    <h2>Your assessments</h2>
+    <div id="assessment-list"></div>
+    <p id="empty-state" style="display:none">No assessments yet. Upload a CSV via the API to get started.</p>
+  </section>
+
+  <!-- ── DETAIL VIEW ── -->
+  <section id="detail-section">
+    <button id="back-btn" onclick="showList()">← Back to assessments</button>
+    <h3 id="detail-title"></h3>
+    <table id="detail-table">
+      <thead>
+        <tr>
+          <th>System</th>
+          <th>Type</th>
+          <th>Composite</th>
+          <th>Complexity</th>
+          <th>Cloud Fit</th>
+          <th>Risk</th>
+          <th>Wave</th>
+          <th>Effort (days)</th>
+        </tr>
+      </thead>
+      <tbody id="detail-body"></tbody>
+    </table>
+  </section>
+
+</main>
+
+<script>
+  // ── Helpers ──────────────────────────────────────────
+  const token = () => localStorage.getItem("token");
+
+  function authHeaders() {
+    return { "Authorization": "Bearer " + token() };
+  }
+
+  function show(id) {
+    ["login-section", "dashboard-section", "detail-section"]
+      .forEach(s => document.getElementById(s).style.display = "none");
+    document.getElementById(id).style.display = "block";
+  }
+
+  // ── Boot ─────────────────────────────────────────────
+  // If we already have a token, skip straight to the list.
+  if (token()) {
+    document.getElementById("logout-btn").style.display = "block";
+    loadAssessments();
+  } else {
+    show("login-section");
+  }
+
+  // ── Login ─────────────────────────────────────────────
+  document.getElementById("login-form").addEventListener("submit", async (e) => {
+    e.preventDefault();  // stop normal form submit (page reload)
+
+    const username = document.getElementById("username").value;
+    const password = document.getElementById("password").value;
+
+    // FastAPI's OAuth2 login expects form-encoded data, not JSON
+    const resp = await fetch("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ username, password }),
+    });
+
+    if (!resp.ok) {
+      document.getElementById("login-error").style.display = "block";
+      return;
+    }
+
+    const data = await resp.json();
+    localStorage.setItem("token", data.access_token);
+    document.getElementById("logout-btn").style.display = "block";
+    loadAssessments();
+  });
+
+  // ── Assessment list ───────────────────────────────────
+  async function loadAssessments() {
+    show("dashboard-section");
+
+    const resp = await fetch("/assessments", { headers: authHeaders() });
+
+    if (resp.status === 401) { logout(); return; }
+
+    const assessments = await resp.json();
+    const list = document.getElementById("assessment-list");
+    const empty = document.getElementById("empty-state");
+
+    list.innerHTML = "";
+
+    if (assessments.length === 0) {
+      empty.style.display = "block";
+      return;
+    }
+
+    empty.style.display = "none";
+
+    for (const a of assessments) {
+      const card = document.createElement("div");
+      card.className = "assessment-card";
+      card.innerHTML = `
+        <span class="name">${a.name}</span>
+        <span class="meta">${a.system_count} systems · ${new Date(a.created_at).toLocaleDateString()}</span>
+      `;
+      card.onclick = () => loadDetail(a.id, a.name);
+      list.appendChild(card);
+    }
+  }
+
+  // ── Detail view ───────────────────────────────────────
+  async function loadDetail(id, name) {
+    const resp = await fetch(`/assessments/${id}`, { headers: authHeaders() });
+    if (!resp.ok) return;
+
+    const data = await resp.json();
+    document.getElementById("detail-title").textContent = name;
+
+    const tbody = document.getElementById("detail-body");
+    tbody.innerHTML = "";
+
+    for (const s of data.scored_systems) {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${s.system_name}</td>
+        <td>${s.system_type}</td>
+        <td>${s.composite_score.toFixed(1)}</td>
+        <td>${s.complexity_score.toFixed(1)}</td>
+        <td>${s.cloud_fit_score.toFixed(1)}</td>
+        <td>${s.risk_score.toFixed(1)}</td>
+        <td class="wave-${s.wave}">${s.wave}</td>
+        <td>${s.effort_min}–${s.effort_max}</td>
+      `;
+      tbody.appendChild(row);
+    }
+
+    show("detail-section");
+  }
+
+  function showList() {
+    show("dashboard-section");
+  }
+
+  // ── Logout ────────────────────────────────────────────
+  function logout() {
+    localStorage.removeItem("token");
+    document.getElementById("logout-btn").style.display = "none";
+    show("login-section");
+  }
+</script>
+
+</body>
+</html>

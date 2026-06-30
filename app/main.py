@@ -1,10 +1,9 @@
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
-from app.routers import auth, health, assessements
+from app.routers import auth, health, assessements, dashboard
 from app.settings import get_settings
 
 
@@ -35,8 +34,8 @@ def create_app() -> FastAPI:
     application.include_router(health.router)
     application.include_router(auth.router)
     application.include_router(assessements.router)
+    application.include_router(dashboard.router)
 
     return application
-
 
 app = create_app()
