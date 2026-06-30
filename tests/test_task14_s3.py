@@ -1,17 +1,9 @@
 import pytest
 from moto import mock_aws
 
-@pytest.fixture
-def s3_env(monkeypatch):
-    monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@localhost/test")
-    monkeypatch.setenv("SECRET_KEY", "testsecret")
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test")
-    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test")
-    monkeypatch.setenv("AWS_REGION", "eu-central-1")
-    monkeypatch.setenv("AWS_BUCKET_NAME", "test-bucket")
 
 @mock_aws
-def test_upload_and_retrieve(s3_env):
+def test_upload_and_retrieve(mock_s3):
     from app.s3 import upload_file, get_s3_client
     from app.settings import get_settings
     upload_file("test.csv", b"hello")
@@ -19,7 +11,7 @@ def test_upload_and_retrieve(s3_env):
     assert obj["Body"].read() == b"hello"
 
 @mock_aws
-def test_delete_file(s3_env):
+def test_delete_file(mock_s3):
     from app.s3 import upload_file, delete_file, get_s3_client
     from app.settings import get_settings
     upload_file("del.csv", b"data")

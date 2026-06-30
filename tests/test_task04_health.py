@@ -1,10 +1,4 @@
-import os
-
-# Set env vars before any app imports to satisfy pydantic-settings
-os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
-os.environ.setdefault("SECRET_KEY", "testsecret")
-
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
 
 def test_health_endpoint():

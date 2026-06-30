@@ -1,4 +1,3 @@
-import os
 import time
 
 import jwt
@@ -7,12 +6,9 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
-os.environ.setdefault("SECRET_KEY", "testsecret")
-
-from app.database import Base, UserModel  # noqa: E402
-from app.deps import get_current_user  # noqa: E402
-from app.settings import get_settings  # noqa: E402
+from app.database import Base, UserModel
+from app.deps import get_current_user
+from app.settings import get_settings
 
 _engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
 _Session = sessionmaker(bind=_engine)
