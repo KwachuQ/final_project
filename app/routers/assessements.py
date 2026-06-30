@@ -1,0 +1,82 @@
+from pydantic import ValidateAs
+import uuid
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from sqlalchemy.orm import Session
+
+from app.database import get_db, AssessmentModel, ScoredSystemModel
+from app.deps import get_current_user
+from app.database import UserModel
+from app.schemas import AssessmentCreateResponse
+from app.services import loader, scoring
+from app.s3 import upload_file, delete_file
+
+router = APIRouter(prefix="/assessments", tags=["Assessments"])
+
+@router.post(
+    "",
+    response_model=AssessmentCreateResponse,
+    status_code=status.HTTP_201_CREATED
+)
+
+async def create_assessment(
+    inventory: UploadFile = File(...),
+    name: str = Form(None),
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
+):
+    
+    data = await inventory.read()
+
+    try:
+        parsed_systems = loader.parse_inventory(data)
+    except loader.CSVValidationError as e:
+        raise HTTPException(status_code = status.HTTP_400_BAD_REQUEST, detail=e.errors)
+    except ValueError as e:
+        raise HTTPException(status_code = status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    scored_systems = scoring.score_systems(parsed_systems)
+    
+    s3_key = f"uploads/{current_user.id}/{uuid.uuid4()}.csv"
+    upload_file(s3_key, data)
+
+    assessment = AssessmentModel(
+        user_id=current_user.id,
+        name=name,
+        s3_key=s3_key,
+        system_count=len(scored_systems)
+    )
+    
+    for inv, sc in zip(parsed_systems, scored_systems):
+        scored_system = ScoredSystemModel(
+            system_name = sc.system_name,
+            system_type = sc.system_type,
+            complexity_score = sc.complexity_score,
+            cloud_fit_score = sc.cloud_fit_score,
+            risk_score = sc.risk_score,
+            composite_score = sc.composite_score,
+            recommended_strategy = sc.recommended_strategy,
+            wave = sc.wave,
+            effort_min = sc.effort_min,
+            effort_max = sc.effort_max,
+            operating_system = inv.operating_system,
+            language = inv.language,
+            num_users = inv.num_users,
+            data_size_gb = inv.data_size_gb,
+            availability = inv.availability,
+            has_compliance = inv.has_compliance,
+            is_vendor_software = inv.is_vendor_software
+        )
+        assessment.scored_systems.append(scored_system)
+
+    db.add(assessment)
+    try:    
+        db.commit()
+        db.refresh(assessment)
+
+    except Exception as e:
+        print(f"Database error: {e}")
+        db.rollback()
+        delete_file(s3_key)
+        raise HTTPException(status_code=500, detail="Failed to save assessment")
+
+    return assessment
