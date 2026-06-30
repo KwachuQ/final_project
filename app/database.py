@@ -1,13 +1,12 @@
 from collections.abc import Generator
 from datetime import datetime
-
 from sqlalchemy import Column, DateTime, Float, Boolean, Integer, String, ForeignKey, create_engine
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 
 from app.settings import get_settings
 
+# Database configuration
 settings = get_settings()
-
 engine = create_engine(settings.DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -40,6 +39,7 @@ class AssessmentModel(Base):
     scored_systems = relationship("ScoredSystemModel", cascade="all, delete-orphan")
 
 class ScoredSystemModel(Base):
+    """ORM model for scored systems."""
 
     __tablename__ = "scored_systems"
 

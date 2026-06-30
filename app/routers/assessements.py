@@ -11,6 +11,7 @@ from app.s3 import upload_file, delete_file
 from app.schemas import AssessmentDetail
 from app.schemas import AssessmentSummary
 
+# Assessment endpoints
 router = APIRouter(prefix="/assessments", tags=["Assessments"])
 
 @router.post(
@@ -25,7 +26,12 @@ async def create_assessment(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user)
 ):
-    
+    """
+    Create a new assessment from a CSV inventory upload.
+
+    Parses the inventory, calculates scores for each system, uploads the original file to S3, 
+    and saves the assessment and scored systems to the database.
+    """
     data = await inventory.read()
 
     try:
@@ -82,21 +88,35 @@ async def create_assessment(
 
     return assessment
 
-@router.get("", response_model=list[AssessmentSummary])
+@router.get(
+    "", 
+    response_model=list[AssessmentSummary]
+    )
+
 def list_assessments(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user)
 ):
+    """
+    Retrieve a summary list of all assessments belonging to the current user.
+    """
     assessments = db.query(AssessmentModel).filter(AssessmentModel.user_id == current_user.id).order_by(AssessmentModel.created_at.desc()).all()
     return [AssessmentSummary(id=a.id, name=a.name, system_count=a.system_count, created_at=a.created_at) for a in assessments]
 
-@router.get("/{assessment_id}", response_model=AssessmentDetail)
+@router.get(
+    "/{assessment_id}", 
+    response_model=AssessmentDetail
+    )
+
 def get_assessment(
-    assessment_id: int,                    # int, not str
+    assessment_id: int,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user)
 ):
-    assessment = db.query(AssessmentModel).filter(AssessmentModel.id == assessment_id).first()  # assessment_id, not id
+    """
+    Retrieve detailed information for a specific assessment.
+    """
+    assessment = db.query(AssessmentModel).filter(AssessmentModel.id == assessment_id).first()
     if not assessment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found")
     elif assessment.user_id != current_user.id:
@@ -108,17 +128,23 @@ def get_assessment(
         created_at=assessment.created_at,
         system_count=assessment.system_count,
         s3_key=assessment.s3_key,
-        scored_systems=assessment.scored_systems   # ORM relation, not re-built
+        scored_systems=assessment.scored_systems 
     )
 
 
-@router.delete("/{assessment_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{assessment_id}", 
+    status_code=status.HTTP_204_NO_CONTENT
+    )
+    
 def delete_assessment(
     assessment_id: int,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user)
 ):
-   
+    """
+    Delete a specific assessment, along with its associated S3 file.
+    """
     assessment = db.query(AssessmentModel).filter(AssessmentModel.id == assessment_id).first()
     if not assessment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found")

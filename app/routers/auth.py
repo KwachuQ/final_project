@@ -1,5 +1,4 @@
 import time
-
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -10,10 +9,10 @@ from app.database import UserModel, get_db
 from app.schemas import TokenResponse, UserRegister, UserResponse
 from app.settings import get_settings
 
+# Create router with prefix
 router = APIRouter(prefix="/auth")
-
+# Create password context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED, response_model=UserResponse)

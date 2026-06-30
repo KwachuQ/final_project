@@ -7,9 +7,11 @@ from app.routers import auth, health, assessements, dashboard
 from app.settings import get_settings
 
 
+# Application factory
 def create_app() -> FastAPI:
     settings = get_settings()
-
+    
+    # Lifespan context manager
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         Base.metadata.create_all(bind=engine)
@@ -30,7 +32,8 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
+    
+    # Include routers
     application.include_router(health.router)
     application.include_router(auth.router)
     application.include_router(assessements.router)
@@ -38,4 +41,6 @@ def create_app() -> FastAPI:
 
     return application
 
+
+# Application instance
 app = create_app()
