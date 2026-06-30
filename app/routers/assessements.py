@@ -1,4 +1,3 @@
-from pydantic import ValidateAs
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
@@ -9,6 +8,8 @@ from app.database import UserModel
 from app.schemas import AssessmentCreateResponse
 from app.services import loader, scoring
 from app.s3 import upload_file, delete_file
+from app.schemas import AssessmentDetail
+from app.schemas import AssessmentSummary
 
 router = APIRouter(prefix="/assessments", tags=["Assessments"])
 
@@ -80,3 +81,52 @@ async def create_assessment(
         raise HTTPException(status_code=500, detail="Failed to save assessment")
 
     return assessment
+
+@router.get("", response_model=list[AssessmentSummary])
+def list_assessments(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
+):
+    assessments = db.query(AssessmentModel).filter(AssessmentModel.user_id == current_user.id).order_by(AssessmentModel.created_at.desc()).all()
+    return [AssessmentSummary(id=a.id, name=a.name, system_count=a.system_count, created_at=a.created_at) for a in assessments]
+
+@router.get("/{assessment_id}", response_model=AssessmentDetail)
+def get_assessment(
+    assessment_id: int,                    # int, not str
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
+):
+    assessment = db.query(AssessmentModel).filter(AssessmentModel.id == assessment_id).first()  # assessment_id, not id
+    if not assessment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found")
+    elif assessment.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    return AssessmentDetail(
+        id=assessment.id,
+        name=assessment.name,
+        created_at=assessment.created_at,
+        system_count=assessment.system_count,
+        s3_key=assessment.s3_key,
+        scored_systems=assessment.scored_systems   # ORM relation, not re-built
+    )
+
+
+@router.delete("/{assessment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_assessment(
+    assessment_id: int,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
+):
+   
+    assessment = db.query(AssessmentModel).filter(AssessmentModel.id == assessment_id).first()
+    if not assessment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found")
+    elif assessment.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
+
+    delete_file(assessment.s3_key)
+    db.delete(assessment)
+    db.commit()
+    
+    return None

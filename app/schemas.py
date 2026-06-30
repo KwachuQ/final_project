@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, model_validator, ConfigDict
 
 
 # ── Enums ────────────────────────────────────────────────────────────
@@ -92,6 +92,8 @@ class SystemInventory(BaseModel):
 
 
 class ScoredSystem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     system_name: str
     system_type: SystemTypeEnum
     composite_score: float
