@@ -16,6 +16,7 @@ dependencies = [
     "python-multipart",
     "pyjwt",
     "passlib[bcrypt]",
+    "bcrypt<4",
     "boto3",
     "jinja2",
     "python-dotenv",
