@@ -37,3 +37,33 @@ To stop the containers:
 ```bash
 docker-compose down
 ```
+
+## Quick Start / Examples
+
+### 1. Register a User
+```bash
+curl -s -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username": "testuser", "password": "testpassword"}'
+```
+
+### 2. Login & Get Token
+(This example uses `jq` to easily extract the token, or you can just copy it from the raw JSON response).
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8000/auth/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=testuser&password=testpassword" | jq -r .access_token)
+```
+
+### 3. Make an Assessment
+Uploads a CSV and creates an assessment:
+```bash
+curl -s -X POST http://localhost:8000/assessments \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "name=My First Assessment" \
+  -F "inventory=@data/fake_systems.csv;type=text/csv"
+```
+
+### Dashboard
+You can view the assessment dashboard in your browser at:
+**[http://localhost:8000/dashboard/](http://localhost:8000/dashboard/)**
