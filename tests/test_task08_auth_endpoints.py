@@ -9,6 +9,13 @@ def test_register_returns_201(client):
     assert data["username"] == "alice"
     assert "user_id" in data
 
+def test_register_password_mismatch_returns_422(client):
+    resp = client.post(
+        "/auth/register",
+        json={"username": "alice", "password": "secret123", "password_repeat": "secret"},
+    )
+    assert resp.status_code == 422
+
 
 def test_register_duplicate_returns_409(client):
     payload = {"username": "dup", "password": "secret123", "password_repeat": "secret123"}
@@ -34,4 +41,8 @@ def test_login_wrong_password_returns_401(client):
         json={"username": "carol", "password": "secret123", "password_repeat": "secret123"},
     )
     resp = client.post("/auth/login", data={"username": "carol", "password": "wrong"})
+    assert resp.status_code == 401
+
+def test_unauthenticated_request_401(client):
+    resp = client.get("/assessments")
     assert resp.status_code == 401

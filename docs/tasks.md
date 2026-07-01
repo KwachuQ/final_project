@@ -17,7 +17,7 @@
                                  │
                                  └→ 16 → 17 → 18
                                            │
-                                           └→ 19 → 20
+                                           └→ 19 → 20 -> 21 -> 22
 ```
 
 Tasks within a phase that share the same parent can be done in any order.
@@ -798,146 +798,58 @@ def test_mock_s3_fixture_isolates(mock_s3):
 
 ---
 
-### Task 19: Create `tests/test_health.py`
-
-**Context:** The health endpoint is the simplest — one test to confirm it returns the expected response.
+### Task 19: Add fixture smoke tests — `tests/conftest.py`
 
 **Build:**
-1. Create `tests/test_health.py`
-2. Test `GET /health` returns `{"status": "ok"}` with `200`
+1. `db` fixture yields a working SQLAlchemy session — execute `SELECT 1`, assert result is `1`
+2. `client` fixture can hit `/health` and get `200`
+3. `auth_client` fixture carries a valid token — `GET /assessments` returns `200`, not `401`
+4. `mock_s3` fixture intercepts S3 — create a bucket inside the mock, assert it appears in `list_buckets()`
 
-**Verify:** `pytest tests/test_health.py -v` — 1 test passes:
-```
-tests/test_health.py::test_health_returns_ok PASSED
-```
+**Verify:** `pytest tests/conftest.py -v` — 4 new tests pass.
 
 ---
 
-### Task 20: Create `tests/test_auth.py`
-
-**Context:** Authentication has multiple paths: successful register and login, duplicate username (409), password mismatch (400), invalid credentials (401).
+### Task 20: Add missing auth tests — `tests/test_task08_auth_endpoints.py`
 
 **Build:**
-1. Test successful register returns `201` with user_id and username
-2. Test duplicate username returns `409`
-3. Test password mismatch returns `400`
-4. Test successful login returns `200` with access_token
-5. Test login with wrong password returns `401`
-6. Test accessing a protected endpoint without a token returns `401`
+1. Register with `password ≠ password_repeat` → `422`
+2. `GET /assessments` with no `Authorization` header → `401`
 
-**Verify:** `pytest tests/test_auth.py -v` — 6 tests pass:
-```
-tests/test_auth.py::test_register_success PASSED
-tests/test_auth.py::test_register_duplicate_409 PASSED
-tests/test_auth.py::test_register_password_mismatch_400 PASSED
-tests/test_auth.py::test_login_success PASSED
-tests/test_auth.py::test_login_wrong_password_401 PASSED
-tests/test_auth.py::test_protected_without_token_401 PASSED
-```
+**Verify:** `pytest tests/test_task08_auth_endpoints.py -v` — 2 new tests pass alongside the existing 4.
 
 ---
 
-### Task 21: Create `tests/test_services/test_loader.py`
-
-**Context:** The CSV loader is a pure function — easy to unit test. Tests cover valid CSVs, invalid rows, duplicate system names, empty files, and files exceeding 1000 rows.
+### Task 21: Add missing scoring tests — `tests/test_task12_scoring.py`
 
 **Build:**
-1. Create `tests/test_services/__init__.py` (empty) and `tests/test_services/test_loader.py`
-2. Test valid CSV parses all rows correctly into `SystemInventory` objects
-3. Test invalid CSV raises `CSVValidationError` with row-numbered errors
-4. Test duplicate system_names in CSV raises validation error
-5. Test CSV with >1000 rows raises an error
+1. Rehost: low complexity (<5) + high cloud_fit (≥7) → `strategy=rehost`
+2. Replatform: moderate complexity (<8) + acceptable cloud_fit (≥6) → `strategy=replatform`
+3. Refactor: high complexity (≥8) → `strategy=refactor`
+4. Wave boundaries: composite <4 → `quick_win`, 4≤composite<7 → `standard`, composite≥7 → `complex`
+5. Composite formula: assert `composite ≈ 0.30×complexity + 0.40×cloud_fit + 0.30×risk`
 
-**Verify:** `pytest tests/test_services/test_loader.py -v` — 4 tests pass:
-```
-tests/test_services/test_loader.py::test_valid_csv_parses PASSED
-tests/test_services/test_loader.py::test_invalid_csv_raises PASSED
-tests/test_services/test_loader.py::test_duplicate_names_raises PASSED
-tests/test_services/test_loader.py::test_exceeding_1000_rows_raises PASSED
-```
+**Verify:** `pytest tests/test_task12_scoring.py -v` — 5 new tests pass alongside the existing 4.
 
 ---
 
-### Task 22: Create `tests/test_services/test_scoring.py`
-
-**Context:** The scoring service is a pure function. Tests verify scoring rules, wave assignment, the 6 Rs strategy, and edge cases.
+### Task 22: Add missing assessment tests — `tests/test_task16_assessment_crud.py`
 
 **Build:**
-1. Create `tests/test_services/test_scoring.py`
-2. Test Retire strategy: system with `num_users=0` → strategy=retire, wave=quick_win, effort=0-0
-3. Test Repurchase strategy: vendor software → strategy=repurchase
-4. Test Retain strategy: cobol system with compliance → strategy=retain
-5. Test Rehost strategy: low complexity, high cloud_fit
-6. Test Replatform strategy: medium complexity, medium cloud_fit
-7. Test Refactor strategy: high complexity, low cloud_fit
-8. Test wave assignment boundaries (3.9 → quick_win, 4.0 → standard, 7.0 → complex)
-9. Test composite_score is weighted average of three scores
+1. `DELETE /assessments/9999` (non-existent) → `404`
+2. Delete another user's assessment → `403` (register two users; user A creates, user B tries to delete)
+3. Compensating transaction: patch `Session.commit` to raise on first call, assert the S3 object is deleted and endpoint returns ≥400
 
-**Verify:** `pytest tests/test_services/test_scoring.py -v` — 8 tests pass:
-```
-tests/test_services/test_scoring.py::test_retire_strategy PASSED
-tests/test_services/test_scoring.py::test_repurchase_strategy PASSED
-tests/test_services/test_scoring.py::test_retain_strategy PASSED
-tests/test_services/test_scoring.py::test_rehost_strategy PASSED
-tests/test_services/test_scoring.py::test_replatform_strategy PASSED
-tests/test_services/test_scoring.py::test_refactor_strategy PASSED
-tests/test_services/test_scoring.py::test_wave_boundaries PASSED
-tests/test_services/test_scoring.py::test_composite_weighted_average PASSED
-```
+**Verify:** `pytest tests/test_task16_assessment_crud.py -v` — 3 new tests pass alongside the existing 4.
 
 ---
 
-### Task 23: Create `tests/test_assessments.py`
-
-**Context:** Assessment endpoints are tested via the authenticated test client with real PostgreSQL and mocked S3. Tests cover the full create-list-detail-delete cycle and error paths.
-
-**Build:**
-1. Test create assessment with valid CSV returns `201` with scored systems
-2. Test create assessment with invalid CSV returns `400` with structured errors
-3. Test list assessments returns list of summaries
-4. Test get assessment detail returns full data with scored_systems
-5. Test delete assessment returns `204` and subsequent `GET` returns `404`
-6. Test deleting another user's assessment returns `403`
-7. Test get non-existent assessment returns `404`
-8. Test compensating transaction: mock DB commit to fail, confirm S3 file is deleted
-9. Test CSV with >1000 rows returns `413`
-
-**Verify:** `pytest tests/test_assessments.py -v` — 9 tests pass:
-```
-tests/test_assessments.py::test_create_valid_csv_201 PASSED
-tests/test_assessments.py::test_create_invalid_csv_400 PASSED
-tests/test_assessments.py::test_list_assessments PASSED
-tests/test_assessments.py::test_get_detail PASSED
-tests/test_assessments.py::test_delete_204_then_404 PASSED
-tests/test_assessments.py::test_delete_other_user_403 PASSED
-tests/test_assessments.py::test_get_nonexistent_404 PASSED
-tests/test_assessments.py::test_compensating_transaction PASSED
-tests/test_assessments.py::test_csv_over_1000_rows_413 PASSED
-```
-
----
-
-### Task 24: Create `tests/test_dashboard.py`
-
-**Context:** The dashboard endpoint returns HTML. Tests verify it renders correctly and contains expected elements.
-
-**Build:**
-1. Test `GET /dashboard` returns `200` with `text/html` content type
-2. Test the HTML contains "PyMigScore" and "login" in the body (case-insensitive)
-
-**Verify:** `pytest tests/test_dashboard.py -v` — 2 tests pass:
-```
-tests/test_dashboard.py::test_dashboard_returns_html PASSED
-tests/test_dashboard.py::test_dashboard_contains_expected_content PASSED
-```
-
----
 
 ## Phase 7: CI/CD
 
 **Goal**: Every push or PR is linted, tested, and built automatically via GitHub Actions.
 
-### Task 25: Create `.github/workflows/ci.yml`
+### Task 23: Create `.github/workflows/ci.yml`
 
 **Context:** Continuous integration ensures code quality. The pipeline lints with ruff, runs the full test suite (which will spin up testcontainers PostgreSQL via Docker-in-Docker), and builds the Docker image.
 
