@@ -44,13 +44,13 @@ docker-compose down
 ```bash
 curl -s -X POST http://localhost:8000/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"username": "testuser", "password": "testpassword"}'
+  -d '{"username": "testuser", "password": "testpassword", "password_repeat": "testpassword"}'
 ```
 
 ### 2. Login & Get Token
 (This example uses `jq` to easily extract the token, or you can just copy it from the raw JSON response).
 ```bash
-TOKEN=$(curl -s -X POST http://localhost:8000/auth/token \
+TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "username=testuser&password=testpassword" | jq -r .access_token)
 ```
