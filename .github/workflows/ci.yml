@@ -25,6 +25,9 @@ jobs:
   test:
     needs: lint
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/test_db"
+      SECRET_KEY: "dummy-secret-key-for-testing"
     steps:
       - uses: actions/checkout@v6
 
