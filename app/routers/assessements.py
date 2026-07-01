@@ -1,7 +1,6 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
-from typing import Annotated
 
 from app.database import get_db, AssessmentModel, ScoredSystemModel
 from app.deps import get_current_user
@@ -21,11 +20,11 @@ router = APIRouter(prefix="/assessments", tags=["Assessments"])
     status_code=status.HTTP_201_CREATED
 )
 
-def create_assessment(
-    inventory: Annotated[UploadFile, File(...)],
-    name: Annotated[str, Form(None)],
-    db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[UserModel, Depends(get_current_user)]
+async def create_assessment(
+    inventory: UploadFile = File(...),
+    name: str = Form(None),
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)
 ):
     """
     Create a new assessment from a CSV inventory upload.
@@ -33,7 +32,7 @@ def create_assessment(
     Parses the inventory, calculates scores for each system, uploads the original file to S3, 
     and saves the assessment and scored systems to the database.
     """
-    data = inventory.read()
+    data = await inventory.read()
 
     try:
         parsed_systems = loader.parse_inventory(data)
