@@ -1,6 +1,7 @@
+import pathlib
 from fastapi import APIRouter, Request
 from fastapi.templating import Jinja2Templates
-import pathlib
+
 
 
 # Create router with prefix
