@@ -1,5 +1,4 @@
 from pathlib import Path
-import re
 
 
 def test_dockerfile_exists():

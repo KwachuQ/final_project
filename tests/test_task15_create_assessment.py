@@ -1,5 +1,4 @@
 import io
-import pytest
 
 
 def test_create_assessment_returns_201(auth_client, mock_s3, sample_inventory_csv):

@@ -844,7 +844,6 @@ def test_mock_s3_fixture_isolates(mock_s3):
 
 ---
 
-
 ## Phase 7: CI/CD
 
 **Goal**: Every push or PR is linted, tested, and built automatically via GitHub Actions.
