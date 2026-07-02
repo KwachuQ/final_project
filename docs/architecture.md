@@ -9,8 +9,6 @@ PyMigScore is a **FastAPI REST API** with two distinct layers:
 
 Routers call services, then read/write to PostgreSQL via SQLAlchemy.
 Uploaded CSV files are stored in AWS S3 for record-keeping.
-No extra abstraction layers — this is a mentoring project, not a distributed
-system.
 
 ---
 
@@ -132,7 +130,7 @@ Once loaded, JS in the page:
   separate follow-up step.
 - **Hardcoded scoring weights** — No external YAML config. Weights are
   constants in `scoring.py`. Simpler, fewer files, same skill demonstration.
-- **Dashboard is Jinja2, not a SPA** — A single HTML template with embedded
+- **Dashboard is Jinja2** — A single HTML template with embedded
   CSS and JS. No build tools, no npm, no frontend framework. The page calls
   the JSON API via `fetch()`. This keeps the project firmly backend-focused.
 
